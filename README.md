@@ -1,4 +1,4 @@
-# Seminario-de-Tecnolog-as-2
+# Seminario-de-Tecnologías-2
 # Proyecto Animación 3D: Enjambre de Luciérnagas Autónoma (Avance 1)
 
 ## Descripción
