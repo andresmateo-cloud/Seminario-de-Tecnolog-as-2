@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Enjambre de Luciérnagas — Modelo 3D</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #020504; }
+    #renderCanvas { width: 100%; height: 100%; display: block; }
+
+    #hud {
+      position: absolute;
+      top: 18px; left: 18px;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: rgba(180,255,140,0.8);
+      pointer-events: none;
+      line-height: 1.7;
+      text-shadow: 0 0 8px rgba(120,255,80,0.6);
+    }
+    #hud span { color: rgba(255,255,180,0.9); }
+
+    #legend {
+      position: absolute;
+      bottom: 18px; right: 18px;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      color: rgba(150,220,120,0.6);
+      pointer-events: none;
+      text-align: right;
+      line-height: 1.8;
+    }
+  </style>
+</head>
+<body>
+<canvas id="renderCanvas"></canvas>
+
+<div id="hud">
+  ESCENA T1 — Enjambre de Luciérnagas (Modelos 3D)<br>
+  Agentes activos: <span id="agentCount">0</span><br>
+  Tiempo: <span id="elapsed">0.0</span>s<br>
+  FPS: <span id="fps">0</span>
+</div>
+
+<div id="legend">
+  WASD / Flechas — Cámara<br>
+  Clic + arrastrar — Rotar vista<br>
+  Scroll — Zoom
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babylonjs/6.26.0/babylon.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babylonjs/6.26.0/babylonjs.materials.min.js"></script>
+
+<script>
+// ============================================================
+//  CLASE FireflyAgent — Modelo 3D del agente
+// ============================================================
+class FireflyAgent {
+  constructor(scene, opts = {}) {
+    this.scene    = scene;
+    this.id       = opts.id ?? 0;
+    this.speed    = opts.speed ?? (0.04 + Math.random() * 0.04);
+    this.blinkRate = 0.8 + Math.random() * 1.4;   
+    this.blinkPhase = Math.random() * Math.PI * 2;
+    this.time     = 0;
+
+    this.bounds = opts.bounds ?? { min: -12, max: 12, yMin: 0.5, yMax: 6 };
+    const hue = opts.color ?? new BABYLON.Color3(0.4 + Math.random() * 0.3, 1, 0.3 + Math.random() * 0.3);
+    this.baseColor = hue;
+
+    // ── CONSTRUCCIÓN DEL MODELO 3D ──
+    // Creamos un nodo raíz invisible para agrupar las partes del cuerpo
+    this.mesh = BABYLON.MeshBuilder.CreateBox(`fireflyRoot_${this.id}`, { size: 0.01 }, scene);
+    this.mesh.isVisible = false;
+    
+    this.mesh.position = opts.position
+      ? opts.position.clone()
+      : new BABYLON.Vector3((Math.random() - 0.5) * 20, 1 + Math.random() * 4, (Math.random() - 0.5) * 20);
+
+    // Materiales del cuerpo
+    const bodyMat = new BABYLON.StandardMaterial(`bodyMat_${this.id}`, scene);
+    bodyMat.diffuseColor = new BABYLON.Color3(0.05, 0.05, 0.05); // Negro/Gris oscuro
+    bodyMat.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+
+    this.glowMat = new BABYLON.StandardMaterial(`glowMat_${this.id}`, scene);
+    this.glowMat.emissiveColor = hue;
+    this.glowMat.disableLighting = true;
+
+    const wingMat = new BABYLON.StandardMaterial(`wingMat_${this.id}`, scene);
+    wingMat.diffuseColor = new BABYLON.Color3(0.7, 0.9, 1.0);
+    wingMat.alpha = 0.4; // Semitransparente
+    wingMat.backFaceCulling = false;
+
+    // Partes de la anatomía (Alineadas hacia el eje +Z)
+    // 1. Abdomen (La parte que brilla)
+    this.abdomen = BABYLON.MeshBuilder.CreateSphere("abdomen", { diameterX: 0.12, diameterY: 0.12, diameterZ: 0.25 }, scene);
+    this.abdomen.position.z = -0.15;
+    this.abdomen.material = this.glowMat;
+    this.abdomen.parent = this.mesh;
+
+    // 2. Tórax
+    const thorax = BABYLON.MeshBuilder.CreateSphere("thorax", { diameter: 0.14 }, scene);
+    thorax.position.z = 0.0;
+    thorax.material = bodyMat;
+    thorax.parent = this.mesh;
+
+    // 3. Cabeza
+    const head = BABYLON.MeshBuilder.CreateSphere("head", { diameter: 0.09 }, scene);
+    head.position.z = 0.12;
+    head.position.y = 0.02;
+    head.material = bodyMat;
+    head.parent = this.mesh;
+
+    // 4. Alas
+    this.wingL = BABYLON.MeshBuilder.CreateSphere("wingL", { diameterX: 0.35, diameterY: 0.02, diameterZ: 0.15 }, scene);
+    this.wingL.position.set(0.1, 0.08, 0.0);
+    this.wingL.material = wingMat;
+    this.wingL.parent = this.mesh;
+    
+    // Cambiamos el pivote del ala para que rote desde la base, no desde el centro
+    this.wingL.setPivotPoint(new BABYLON.Vector3(-0.15, 0, 0));
+
+    this.wingR = BABYLON.MeshBuilder.CreateSphere("wingR", { diameterX: 0.35, diameterY: 0.02, diameterZ: 0.15 }, scene);
+    this.wingR.position.set(-0.1, 0.08, 0.0);
+    this.wingR.material = wingMat;
+    this.wingR.parent = this.mesh;
+    
+    this.wingR.setPivotPoint(new BABYLON.Vector3(0.15, 0, 0));
+
+    // ── LUZ Y PARTÍCULAS ──
+    this.light = new BABYLON.PointLight(`ffLight_${this.id}`, new BABYLON.Vector3(0, 0, 0), scene);
+    this.light.diffuse  = hue;
+    this.light.specular = hue;
+    this.light.intensity = 0;
+    this.light.range = 4.5; 
+    this.light.parent = this.abdomen; // La luz sigue al abdomen directamente
+
+    this._buildTrail();
+
+    this.direction = opts.direction
+      ? opts.direction.clone().normalize()
+      : new BABYLON.Vector3((Math.random() - 0.5) * 2, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 2).normalize();
+
+    this._wiggleTimer = 0;
+    this._wiggleInterval = 1.2 + Math.random() * 1.5;
+  }
+
+  _buildTrail() {
+    this.ps = new BABYLON.ParticleSystem(`trail_${this.id}`, 35, this.scene);
+    this.ps.emitter = this.abdomen; // El rastro sale del abdomen brillante
+    this.ps.minSize = 0.03; this.ps.maxSize = 0.08;
+    this.ps.minLifeTime = 0.4; this.ps.maxLifeTime = 0.9;
+    this.ps.emitRate = 18;
+    this.ps.minEmitPower = 0.01; this.ps.maxEmitPower = 0.04;
+    this.ps.updateSpeed = 0.02;
+    this.ps.gravity = new BABYLON.Vector3(0, 0.02, 0);
+
+    const c = this.baseColor;
+    this.ps.color1 = new BABYLON.Color4(c.r, c.g, c.b, 1);
+    this.ps.color2 = new BABYLON.Color4(c.r * 0.5, c.g * 0.6, c.b * 0.2, 0.5);
+    this.ps.colorDead = new BABYLON.Color4(0, 0, 0, 0);
+    this.ps.start();
+  }
+
+  update(dt) {
+    this.time += dt;
+
+    // Parpadeo de la luz y el material del abdomen
+    const blink = Math.max(0, Math.sin(this.time * this.blinkRate * Math.PI * 2 + this.blinkPhase));
+    const intensity = blink * blink;
+    this.light.intensity = intensity * 2.2;
+    this.glowMat.emissiveColor = this.baseColor.scale(0.1 + intensity * 0.9);
+
+    // Animación de las alas (Aleteo rápido basado en el tiempo)
+    const flapSpeed = 60; // Velocidad del aleteo
+    const flapAngle = Math.sin(this.time * flapSpeed) * 0.6;
+    this.wingL.rotation.z = flapAngle;
+    this.wingR.rotation.z = -flapAngle;
+
+    // Wiggle aleatorio
+    this._wiggleTimer += dt;
+    if (this._wiggleTimer >= this._wiggleInterval) {
+      this._wiggleTimer = 0;
+      this._wiggleInterval = 1.2 + Math.random() * 1.5;
+      const perturb = new BABYLON.Vector3(
+        (Math.random() - 0.5) * 0.6,
+        (Math.random() - 0.5) * 0.3,
+        (Math.random() - 0.5) * 0.6
+      );
+      this.direction.addInPlace(perturb).normalize();
+    }
+
+    // Movimiento
+    this.mesh.position.addInPlace(this.direction.scale(this.speed * dt * 60));
+    
+    // Rotar el modelo 3D para mirar hacia la dirección en la que vuela
+    const target = this.mesh.position.add(this.direction);
+    this.mesh.lookAt(target);
+
+    // Límites (Rebotes)
+    const p  = this.mesh.position;
+    const b  = this.bounds;
+
+    if (p.x < b.min || p.x > b.max) { this.direction.x *= -1; p.x = BABYLON.Scalar.Clamp(p.x, b.min, b.max); }
+    if (p.z < b.min || p.z > b.max) { this.direction.z *= -1; p.z = BABYLON.Scalar.Clamp(p.z, b.min, b.max); }
+    if (p.y < b.yMin || p.y > b.yMax) { this.direction.y *= -1; p.y = BABYLON.Scalar.Clamp(p.y, b.yMin, b.yMax); }
+  }
+
+  dispose() {
+    this.ps.stop(); this.ps.dispose(); this.light.dispose(); this.mesh.dispose();
+  }
+}
+
+// ============================================================
+//  ESCENA PRINCIPAL
+// ============================================================
+(function initScene() {
+  const canvas = document.getElementById('renderCanvas');
+  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: false, stencil: false });
+
+  const scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.01, 0.02, 0.015, 1);
+  scene.fogMode    = BABYLON.Scene.FOGMODE_EXP2;
+  scene.fogDensity = 0.035;
+  scene.fogColor   = new BABYLON.Color3(0.01, 0.025, 0.018);
+
+  // Cámara
+  const camera = new BABYLON.ArcRotateCamera('cam', -Math.PI / 2.2, Math.PI / 2.8, 18, new BABYLON.Vector3(0, 1.5, 0), scene);
+  camera.lowerRadiusLimit = 4;
+  camera.upperRadiusLimit = 35;
+  camera.wheelPrecision   = 8;
+  camera.attachControl(canvas, true);
+
+  // Luz ambiental nocturna suave
+  const ambient = new BABYLON.HemisphericLight('amb', new BABYLON.Vector3(0, 1, 0), scene);
+  ambient.intensity = 0.08;
+  ambient.diffuse   = new BABYLON.Color3(0.1, 0.15, 0.2); 
+
+  // ── 1. SUELO ORGÁNICO CON RELIEVE ──
+  const groundSize = 32;
+  const groundSubdivs = 30;
+  const ground = BABYLON.MeshBuilder.CreateGround('organicGround', { width: groundSize, height: groundSize, subdivisions: groundSubdivs }, scene);
+  
+  function getGroundHeight(x, z) {
+    return Math.sin(x * 0.2) * Math.cos(z * 0.2) * 0.6 + Math.sin(x * 0.05) * 0.3;
+  }
+
+  const positions = ground.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+  for (let i = 0; i < positions.length; i += 3) {
+    positions[i + 1] = getGroundHeight(positions[i], positions[i + 2]);
+  }
+  ground.updateVerticesData(BABYLON.VertexBuffer.PositionKind, positions);
+
+  const normals = [];
+  BABYLON.VertexData.ComputeNormals(positions, ground.getIndices(), normals);
+  ground.setVerticesData(BABYLON.VertexBuffer.NormalKind, normals);
+
+  const groundMat = new BABYLON.StandardMaterial('groundMat', scene);
+  groundMat.diffuseColor  = new BABYLON.Color3(0.03, 0.05, 0.02);
+  groundMat.specularColor = new BABYLON.Color3(0.01, 0.02, 0.01);
+  ground.material = groundMat;
+
+  // ── 2. ÁRBOLES ASIMÉTRICOS Y ORGÁNICOS ──
+  const treePositions = [
+    [-8, -7], [7, -9], [-9, 5], [9, 6], [0, -11],
+    [-5, 9],  [6, 8],  [-11, -1], [11, 2], [3, 11], [-2, -5], [5, -2]
+  ];
+  
+  const trunkMat = new BABYLON.StandardMaterial('trunk', scene);
+  trunkMat.diffuseColor = new BABYLON.Color3(0.09, 0.06, 0.04);
+  trunkMat.specularColor = new BABYLON.Color3(0, 0, 0);
+
+  treePositions.forEach(([x, z], i) => {
+    const groundY = getGroundHeight(x, z);
+    const h = 3.0 + Math.random() * 2;
+    const trunkRadius = 0.15 + Math.random() * 0.1;
+
+    const trunk = BABYLON.MeshBuilder.CreateCylinder(`trunk_${i}`, { height: h, diameterTop: trunkRadius * 0.7, diameterBottom: trunkRadius, tessellation: 6 }, scene);
+    trunk.position = new BABYLON.Vector3(x, groundY + h / 2, z);
+    trunk.material = trunkMat;
+
+    const leafMat = new BABYLON.StandardMaterial(`leaf_${i}`, scene);
+    leafMat.diffuseColor = new BABYLON.Color3(0.02 + Math.random()*0.02, 0.06 + Math.random()*0.04, 0.02 + Math.random()*0.02);
+    leafMat.specularColor = new BABYLON.Color3(0, 0, 0);
+
+    const crownCenterY = groundY + h;
+    const numSpheres = 3 + Math.floor(Math.random() * 2);
+    
+    for (let j = 0; j < numSpheres; j++) {
+      const sRadius = 1.1 + Math.random() * 0.7;
+      const sphere = BABYLON.MeshBuilder.CreateSphere(`crown_${i}_${j}`, { diameter: sRadius * 2, segments: 4 }, scene);
+      
+      const offsetX = (Math.random() - 0.5) * 0.8;
+      const offsetY = (Math.random() * 0.7);
+      const offsetZ = (Math.random() - 0.5) * 0.8;
+      
+      sphere.position = new BABYLON.Vector3(x + offsetX, crownCenterY + offsetY, z + offsetZ);
+      sphere.scaling.set(1.0, 0.8 + Math.random()*0.3, 1.0);
+      sphere.material = leafMat;
+    }
+  });
+
+  // ── 3. SISTEMA DE PASTO (SPS) ──
+  const bladeMesh = BABYLON.MeshBuilder.CreateGround('blade', { width: 0.35, height: 0.55 }, scene);
+  bladeMesh.rotation.x = -Math.PI / 2;
+  bladeMesh.bakeCurrentTransformIntoVertices();
+
+  const grassSPS = new BABYLON.SolidParticleSystem('grassSPS', scene);
+  grassSPS.addShape(bladeMesh, 400);
+  bladeMesh.dispose();
+
+  const grassMesh = grassSPS.buildMesh();
+  const grassMat = new BABYLON.StandardMaterial('grassMat', scene);
+  grassMat.diffuseColor = new BABYLON.Color3(0.04, 0.1, 0.03);
+  grassMat.specularColor = new BABYLON.Color3(0, 0, 0);
+  grassMat.backFaceCulling = false;
+  grassMesh.material = grassMat;
+
+  grassSPS.initParticles = () => {
+    for (let p = 0; p < grassSPS.nbParticles; p++) {
+      const particle = grassSPS.particles[p];
+      particle.position.x = (Math.random() - 0.5) * (groundSize - 4);
+      particle.position.z = (Math.random() - 0.5) * (groundSize - 4);
+      particle.position.y = getGroundHeight(particle.position.x, particle.position.z) + 0.25;
+      particle.rotation.y = Math.random() * Math.PI;
+      particle.rotation.x = (Math.random() - 0.5) * 0.2;
+      const scale = 0.7 + Math.random() * 0.7;
+      particle.scale.set(scale, scale * (0.8 + Math.random() * 0.5), scale);
+    }
+  };
+  grassSPS.initParticles();
+  grassSPS.setParticles();
+
+  // ── 4. NEBLINA DE SUELO Y ATMÓSFERA ──
+  const fog = BABYLON.MeshBuilder.CreateGround('fogPlane', { width: groundSize, height: groundSize }, scene);
+  fog.position.y = 0.8;
+  const fogMat = new BABYLON.StandardMaterial('fogMat', scene);
+  fogMat.diffuseColor  = new BABYLON.Color3(0.02, 0.07, 0.04);
+  fogMat.emissiveColor = new BABYLON.Color3(0.005, 0.015, 0.01);
+  fogMat.alpha = 0.25;
+  fogMat.backFaceCulling = false;
+  fog.material = fogMat;
+
+  const starsMesh = BABYLON.MeshBuilder.CreateSphere('stars', { diameter: 75, segments: 6 }, scene);
+  starsMesh.scaling.y = 0.6;
+  const starsMat = new BABYLON.StandardMaterial('starsMat', scene);
+  starsMat.emissiveColor   = new BABYLON.Color3(0.01, 0.02, 0.015);
+  starsMat.backFaceCulling = false;
+  starsMesh.material = starsMat;
+
+  const glowLayer = new BABYLON.GlowLayer('glow', scene);
+  glowLayer.intensity = 1.6;
+  glowLayer.blurKernelSize = 32;
+
+  // ============================================================
+  //  INSTANCIAS DE AGENTES (LUCIÉRNAGAS)
+  // ============================================================
+  const BOUNDS = { min: -13, max: 13, yMin: 0.6, yMax: 5.0 };
+
+  const agentConfigs = [
+    { pos: [-4,  1.5, -3], dir: [ 1,  0.1,  0.5], color: new BABYLON.Color3(0.5, 1.0, 0.2) },
+    { pos: [ 3,  2.2,  2], dir: [-0.7, 0.2,  1  ], color: new BABYLON.Color3(0.3, 0.9, 0.6) },
+    { pos: [ 0,  3.5, -5], dir: [ 0.5,-0.15, 0.8], color: new BABYLON.Color3(0.6, 1.0, 0.2) },
+    { pos: [-6,  1.8,  4], dir: [ 0.9, 0.3, -0.4], color: new BABYLON.Color3(0.2, 0.9, 0.5) },
+    { pos: [ 5,  1.2,  5], dir: [-0.4, 0.05, 0.9], color: new BABYLON.Color3(0.7, 1.0, 0.3) },
+    { pos: [-2,  3.8,  1], dir: [ 0.3,-0.2, -0.9], color: new BABYLON.Color3(0.4, 0.95,0.4) },
+    { pos: [ 7,  2.0, -3], dir: [-1.0, 0.1,  0.2], color: new BABYLON.Color3(0.5, 1.0, 0.5) },
+    { pos: [-5,  2.8, -6], dir: [ 0.6, 0.25, 0.7], color: new BABYLON.Color3(0.3, 1.0, 0.2) },
+  ];
+
+  const agents = agentConfigs.map((cfg, i) => {
+    const startY = getGroundHeight(cfg.pos[0], cfg.pos[2]) + cfg.pos[1];
+    return new FireflyAgent(scene, {
+      id:        i,
+      position:  new BABYLON.Vector3(cfg.pos[0], startY, cfg.pos[2]),
+      direction: new BABYLON.Vector3(...cfg.dir),
+      color:     cfg.color,
+      bounds:    BOUNDS,
+      speed:     0.03 + Math.random() * 0.035,
+    });
+  });
+
+  document.getElementById('agentCount').textContent = agents.length;
+
+  let elapsed = 0;
+  const fpsEl   = document.getElementById('fps');
+  const timeEl  = document.getElementById('elapsed');
+
+  engine.runRenderLoop(() => {
+    const dt = engine.getDeltaTime() / 1000;   
+    elapsed += dt;
+
+    agents.forEach(a => a.update(dt));
+
+    if (Math.floor(elapsed * 2) % 2 === 0) {
+      fpsEl.textContent  = engine.getFps().toFixed(0);
+      timeEl.textContent = elapsed.toFixed(1);
+    }
+
+    scene.render();
+  });
+
+  window.addEventListener('resize', () => engine.resize());
+})();
+</script>
+</body>
+</html>
