@@ -1,5 +1,8 @@
 # Seminario-de-Tecnologías-2
 # Proyecto Animación 3D: Enjambre de Luciérnagas Autónoma (Avance 1)
+# Integrantes del equipo:
+ * Mateo Dorantes Andrés
+ * Pérez Alvarado Adán
 
 ## Descripción
 Este proyecto presenta la integración funcional de las etapas T1, T2 y T3. Consiste en un sistema de partículas biológicas articuladas (luciérnagas) que patrullan un espacio virtual tridimensional de manera independiente.
