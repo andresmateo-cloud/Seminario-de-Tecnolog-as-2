@@ -15,3 +15,13 @@ Este proyecto presenta la integración funcional de las etapas T1, T2 y T3. Cons
 1.  **Jerarquías de Transformación (T2):** Las alas están anidadas a pivotes descentralizados con respecto al tórax. Esto permite que el aleteo (`Math.sin(t)`) sea relativo a su articulación y no deforme el cuerpo del insecto.
 2.  **Movimiento Autónomo Local (T3):** Cada agente se desplaza utilizando vectores de velocidad tridimensionales aleatorios propios y rota orgánicamente hacia su vector de dirección mediante cálculo trigonométrico en tiempo real.
 3.  **Iluminación Dinámica:** Cada luciérnaga posee un material emisivo acoplado a una `PointLight` interna, simulando bioluminiscencia real que afecta al entorno cercano al volar.
+## Segunda entrega del proyecto
+# Entrega Parcial: Instancing + Shader
+
+## Requisitos cumplidos
+
+- [x] **100 agentes renderizados** con `InstancedMesh` o `VAT/boneVAT` (T5).
+- [x] **Shader avanzado aplicado** (ejemplo: Toon, Normal map o Vertex wobble).
+- [x] **Movimiento coherente**: aleatorio o dirigido (flocking completo en T6).
+- [x] **Rendimiento**: 30 fps con 100 agentes, mostrando contador de FPS en pantalla.
+
