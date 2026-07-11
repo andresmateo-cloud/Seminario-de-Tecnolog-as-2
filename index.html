@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Enjambre Boids — Flocking 200 Agentes (InstancedMesh + Shader)</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{width:100%;height:100%;overflow:hidden;background:#010302}
+    #c{width:100%;height:100%;display:block}
+    #hud{position:absolute;top:16px;left:16px;font-family:'Courier New',monospace;
+      font-size:11px;color:rgba(170,255,130,.85);pointer-events:none;line-height:2;
+      text-shadow:0 0 8px rgba(100,255,60,.5)}
+    #hud b{color:rgba(255,255,160,1)}
+    #fb{display:inline-block;width:56px;height:5px;background:rgba(255,255,255,.12);
+      border-radius:3px;overflow:hidden;vertical-align:middle;margin-left:4px}
+    #ff{height:100%;width:0%;background:linear-gradient(90deg,#f40,#fc0,#3f7);border-radius:3px;transition:width .3s}
+    #leg{position:absolute;bottom:16px;right:16px;font-family:'Courier New',monospace;
+      font-size:10px;color:rgba(130,200,100,.45);pointer-events:none;text-align:right;line-height:2}
+
+    #panel{
+      position:absolute;top:16px;right:16px;
+      font-family:'Courier New',monospace;font-size:11px;
+      color:rgba(170,255,130,.9);line-height:2.1;
+      background:rgba(0,12,4,.75);border:1px solid rgba(60,200,80,.25);
+      border-radius:8px;padding:12px 16px;backdrop-filter:blur(6px);
+      text-shadow:0 0 6px rgba(60,200,80,.4);min-width:250px;max-height:92vh;overflow-y:auto;
+    }
+    #panel b{color:rgba(255,255,140,1);}
+    #panel label{display:flex;align-items:center;gap:8px;cursor:pointer;justify-content:space-between}
+    #panel input[type=range]{
+      -webkit-appearance:none;width:110px;height:4px;
+      background:rgba(60,200,80,.25);border-radius:2px;outline:none;cursor:pointer;
+    }
+    #panel input[type=range]::-webkit-slider-thumb{
+      -webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+      background:rgba(100,255,80,1);box-shadow:0 0 6px rgba(100,255,80,.7);
+    }
+    #panel select{
+      background:rgba(0,20,6,.8);color:rgba(170,255,130,.95);
+      border:1px solid rgba(60,200,80,.3);border-radius:4px;
+      font-family:'Courier New',monospace;font-size:11px;padding:1px 4px;cursor:pointer;
+    }
+    #panel .sep{border-top:1px solid rgba(60,200,80,.18);margin:6px 0;}
+    #panel .grp{color:rgba(255,255,140,1);margin-top:2px}
+    .val{color:rgba(255,255,140,1);min-width:30px;display:inline-block;text-align:right;}
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  ENJAMBRE BOIDS — FLOCKING<br>
+  Agentes: <b id="nagHUD">200</b> luciérnagas (1 draw call, ~34 con luz propia)<br>
+  FPS: <b id="fps">--</b><span id="fb"><span id="ff"></span></span><br>
+  Tiempo: <b id="t">0.0</b>s
+</div>
+<div id="leg">Drag — Rotar · Scroll — Zoom</div>
+
+<div id="panel">
+  <b>⚙ FLOCKING — PARÁMETROS</b>
+  <div class="sep"></div>
+  <div class="grp">Reglas de Boids</div>
+  <label>Separación (w)
+    <input type="range" id="slSep" min="0" max="4" step="0.05" value="1.6">
+    <span class="val" id="vSep">1.60</span>
+  </label>
+  <label>Alineación (w)
+    <input type="range" id="slAli" min="0" max="4" step="0.05" value="1.0">
+    <span class="val" id="vAli">1.00</span>
+  </label>
+  <label>Cohesión (w)
+    <input type="range" id="slCoh" min="0" max="4" step="0.05" value="0.8">
+    <span class="val" id="vCoh">0.80</span>
+  </label>
+  <label>Radio percepción
+    <input type="range" id="slPer" min="1" max="7" step="0.1" value="3.2">
+    <span class="val" id="vPer">3.2</span>
+  </label>
+  <label>Radio separación
+    <input type="range" id="slSepR" min="0.3" max="3" step="0.1" value="1.1">
+    <span class="val" id="vSepR">1.1</span>
+  </label>
+  <div class="sep"></div>
+  <div class="grp">Movimiento global</div>
+  <label>Velocidad (×)
+    <input type="range" id="slV" min="0.2" max="3.0" step="0.1" value="1.0">
+    <span class="val" id="vval">1.0</span>
+  </label>
+  <label>Límite X/Z
+    <input type="range" id="slW" min="6" max="14" step="1" value="12">
+    <span class="val" id="wxval">12</span>
+  </label>
+  <label>Límite Y
+    <input type="range" id="slY" min="3" max="9" step="0.5" value="8.5">
+    <span class="val" id="wyval">8.5</span>
+  </label>
+  <div class="sep"></div>
+  modoSalida &nbsp;
+  <select id="selM">
+    <option value="0">0 — Rebote</option>
+    <option value="1" selected>1 — Wraparound</option>
+  </select>
+  <div class="sep"></div>
+  Agentes activos: <b id="nagval">200</b>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babylonjs/6.26.0/babylon.js"></script>
+<script>
+"use strict";
+
+(function(){
+  const canvas=document.getElementById('c');
+  const engine=new BABYLON.Engine(canvas,true,{stencil:false,antialias:true});
+  const scene=new BABYLON.Scene(engine);
+  scene.clearColor=new BABYLON.Color4(.008,.012,.01,1);
+  scene.fogMode=BABYLON.Scene.FOGMODE_EXP2;
+  scene.fogDensity=.024;
+  scene.fogColor=new BABYLON.Color3(.01,.025,.018);
+
+  const cam=new BABYLON.ArcRotateCamera('c',-Math.PI/2.2,Math.PI/2.9,22,new BABYLON.Vector3(0,1.5,0),scene);
+  cam.lowerRadiusLimit=5;cam.upperRadiusLimit=45;cam.wheelPrecision=8;
+  cam.attachControl(canvas,true);
+
+  const amb=new BABYLON.HemisphericLight('a',new BABYLON.Vector3(0,1,0),scene);
+  amb.intensity=.05;amb.diffuse=new BABYLON.Color3(.07,.11,.16);
+  const AMBIENT_COLOR = new BABYLON.Color3(.05,.09,.13);
+
+  // luz de luna direccional, coherente con el disco lunar pintado en el cielo
+  const moonLight = new BABYLON.DirectionalLight('moon', new BABYLON.Vector3(-.45,-1,-.35), scene);
+  moonLight.diffuse = new BABYLON.Color3(.30,.36,.48);
+  moonLight.specular = BABYLON.Color3.Black();
+  moonLight.intensity = .22;
+
+  // ══════════════════════════════════════════════════════════════
+  // CIELO ESTRELLADO + LUNA (skydome, no afectado por la niebla)
+  // ══════════════════════════════════════════════════════════════
+  function buildSky(){
+    const sky=BABYLON.MeshBuilder.CreateSphere('sky',{diameter:300,segments:12,sideOrientation:BABYLON.Mesh.BACKSIDE},scene);
+    sky.infiniteDistance=true; sky.applyFog=false;
+
+    const S=1024;
+    const tex=new BABYLON.DynamicTexture('skyTex',S,scene,false);
+    const ctx=tex.getContext();
+    const grad=ctx.createLinearGradient(0,0,0,S);
+    grad.addColorStop(0,'#020712');grad.addColorStop(.55,'#030b12');grad.addColorStop(1,'#061512');
+    ctx.fillStyle=grad;ctx.fillRect(0,0,S,S);
+    for(let i=0;i<900;i++){
+      const x=Math.random()*S, y=Math.random()*S*.75, r=Math.random()*1.3+.2, a=Math.random()*.6+.35;
+      ctx.beginPath();ctx.fillStyle=`rgba(255,255,255,${a})`;ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+    }
+    ctx.save();
+    ctx.shadowColor='rgba(230,235,210,.9)';ctx.shadowBlur=40;
+    ctx.beginPath();ctx.fillStyle='rgba(232,236,214,.95)';ctx.arc(S*.78,S*.15,32,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+    tex.update();
+
+    const skyMat=new BABYLON.StandardMaterial('skyMat',scene);
+    skyMat.diffuseColor=BABYLON.Color3.Black();skyMat.specularColor=BABYLON.Color3.Black();
+    skyMat.emissiveTexture=tex; skyMat.backFaceCulling=false; skyMat.disableLighting=true;
+    sky.material=skyMat;
+    return sky;
+  }
+  buildSky();
+
+  // ══════════════════════════════════════════════════════════════
+  // TERRENO — múltiples octavas de ruido + color por vértice (gradiente musgo/pasto)
+  // ══════════════════════════════════════════════════════════════
+  function gH(x,z){
+    return Math.sin(x*.2)*Math.cos(z*.2)*.6
+         + Math.sin(x*.05)*.3
+         + Math.sin(x*.55+z*.3)*.12
+         + Math.cos(z*.47-x*.2)*.10;
+  }
+  const SZ=38;
+  const gnd=BABYLON.MeshBuilder.CreateGround('g',{width:SZ,height:SZ,subdivisions:44},scene);
+  const gp=gnd.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+  let hMin=Infinity,hMax=-Infinity;
+  for(let i=0;i<gp.length;i+=3){ gp[i+1]=gH(gp[i],gp[i+2]); hMin=Math.min(hMin,gp[i+1]); hMax=Math.max(hMax,gp[i+1]); }
+  gnd.updateVerticesData(BABYLON.VertexBuffer.PositionKind,gp);
+  const gn=[];BABYLON.VertexData.ComputeNormals(gp,gnd.getIndices(),gn);
+  gnd.setVerticesData(BABYLON.VertexBuffer.NormalKind,gn);
+
+  const gcolors=[];
+  const low=[.018,.045,.018], mid=[.03,.07,.028], high=[.05,.095,.035];
+  for(let i=0;i<gp.length;i+=3){
+    const t=(gp[i+1]-hMin)/Math.max(.0001,hMax-hMin);
+    const c = t<.5 ? [0,1,2].map(k=>low[k]+(mid[k]-low[k])*(t/.5))
+                    : [0,1,2].map(k=>mid[k]+(high[k]-mid[k])*((t-.5)/.5));
+    gcolors.push(c[0],c[1],c[2],1);
+  }
+  gnd.setVerticesData(BABYLON.VertexBuffer.ColorKind,gcolors);
+
+  const gm=new BABYLON.StandardMaterial('gm',scene);
+  gm.diffuseColor=new BABYLON.Color3(1,1,1);gm.specularColor=BABYLON.Color3.Black();
+  gm.maxSimultaneousLights=8;
+  gnd.material=gm;
+
+  // ── Vegetación: árboles variados + arbustos + rocas dispersas ──
+  const TREE_SPOTS=[[-8,-7],[7,-9],[-9,5],[9,6],[0,-11],[-5,9],[6,8],[-11,-1],
+                     [-13,3],[13,-4],[3,13],[-4,-14],[11,11],[-14,-8],[2,7],[-6,-3]];
+  TREE_SPOTS.forEach(([x,z],i)=>{
+    const gy=gH(x,z),h=2.4+Math.random()*3.2;
+    const tM=new BABYLON.StandardMaterial('t'+i,scene);
+    tM.diffuseColor=new BABYLON.Color3(.07+Math.random()*.03,.045,.025);tM.specularColor=BABYLON.Color3.Black();
+    tM.maxSimultaneousLights=8;
+    const tr=BABYLON.MeshBuilder.CreateCylinder('tr'+i,{height:h,diameterTop:.10+Math.random()*.05,diameterBottom:.18+Math.random()*.10,tessellation:5},scene);
+    tr.position.set(x,gy+h/2,z);tr.rotation.y=Math.random()*Math.PI;tr.material=tM;
+
+    const lM=new BABYLON.StandardMaterial('l'+i,scene);
+    lM.diffuseColor=new BABYLON.Color3(.018+Math.random()*.02,.05+Math.random()*.02,.014);
+    lM.specularColor=BABYLON.Color3.Black();lM.maxSimultaneousLights=8;
+    const clusters=3+Math.floor(Math.random()*3);
+    for(let j=0;j<clusters;j++){
+      const s=BABYLON.MeshBuilder.CreateSphere('s'+i+'_'+j,{diameter:(1.1+Math.random()*.9)*2,segments:3},scene);
+      s.position.set(x+(Math.random()-.5)*1.0,gy+h+Math.random()*.9,z+(Math.random()-.5)*1.0);
+      s.material=lM;
+    }
+  });
+
+  // arbustos bajos dispersos
+  const bushMat=new BABYLON.StandardMaterial('bushM',scene);
+  bushMat.diffuseColor=new BABYLON.Color3(.02,.055,.018);bushMat.specularColor=BABYLON.Color3.Black();
+  bushMat.maxSimultaneousLights=8;
+  for(let i=0;i<14;i++){
+    const x=(Math.random()-.5)*30, z=(Math.random()-.5)*30, gy=gH(x,z);
+    const b=BABYLON.MeshBuilder.CreateSphere('bush'+i,{diameterX:.9+Math.random()*.6,diameterY:.5+Math.random()*.3,diameterZ:.9+Math.random()*.6,segments:3},scene);
+    b.position.set(x,gy+.3,z);b.material=bushMat;
+  }
+
+  // rocas dispersas
+  const rockMat=new BABYLON.StandardMaterial('rockM',scene);
+  rockMat.diffuseColor=new BABYLON.Color3(.05,.05,.055);rockMat.specularColor=BABYLON.Color3.Black();
+  rockMat.maxSimultaneousLights=8;
+  for(let i=0;i<10;i++){
+    const x=(Math.random()-.5)*30, z=(Math.random()-.5)*30, gy=gH(x,z);
+    const r=BABYLON.MeshBuilder.CreatePolyhedron('rock'+i,{type:1,size:.3+Math.random()*.35},scene);
+    r.position.set(x,gy+.2,z);r.rotation.set(Math.random()*3,Math.random()*3,Math.random()*3);r.material=rockMat;
+  }
+
+  // pequeño estanque en una zona plana cerca del centro
+  const pond=BABYLON.MeshBuilder.CreateDisc('pond',{radius:3.4,tessellation:48},scene);
+  pond.rotation.x=Math.PI/2; pond.position.set(-3,gH(-3,-2)+.03,-2);
+  const pondM=new BABYLON.StandardMaterial('pondM',scene);
+  pondM.diffuseColor=new BABYLON.Color3(.01,.035,.045);
+  pondM.specularColor=new BABYLON.Color3(.15,.2,.22);pondM.specularPower=64;
+  pondM.emissiveColor=new BABYLON.Color3(.004,.014,.018);
+  pondM.alpha=.85; pond.material=pondM;
+
+  // niebla baja (capa translúcida cerca del suelo)
+  const fp=BABYLON.MeshBuilder.CreateGround('fp',{width:SZ,height:SZ},scene);
+  fp.position.y=.65;
+  const fm=new BABYLON.StandardMaterial('fm',scene);
+  fm.diffuseColor=new BABYLON.Color3(.02,.07,.04);fm.emissiveColor=new BABYLON.Color3(.005,.015,.01);
+  fm.alpha=.18;fm.backFaceCulling=false;fp.material=fm;
+
+  // motas de polvo/niebla flotante para dar profundidad atmosférica
+  (function buildMist(){
+    const S=64;
+    const dt=new BABYLON.DynamicTexture('mistTex',S,scene,false);
+    const ctx=dt.getContext();
+    const g=ctx.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+    g.addColorStop(0,'rgba(200,255,210,.5)');g.addColorStop(1,'rgba(200,255,210,0)');
+    ctx.fillStyle=g;ctx.fillRect(0,0,S,S);dt.update();
+
+    const ps=new BABYLON.ParticleSystem('mist',50,scene);
+    ps.particleTexture=dt;
+    ps.emitter=new BABYLON.Vector3(0,1,0);
+    ps.minEmitBox=new BABYLON.Vector3(-16,0,-16); ps.maxEmitBox=new BABYLON.Vector3(16,3,16);
+    ps.color1=new BABYLON.Color4(.6,.9,.6,.06); ps.color2=new BABYLON.Color4(.5,.8,.6,.10);
+    ps.colorDead=new BABYLON.Color4(.4,.7,.5,0);
+    ps.minSize=1.2; ps.maxSize=3.0;
+    ps.minLifeTime=8; ps.maxLifeTime=14;
+    ps.emitRate=6;
+    ps.blendMode=BABYLON.ParticleSystem.BLENDMODE_ADD;
+    ps.direction1=new BABYLON.Vector3(-.03,.02,-.03); ps.direction2=new BABYLON.Vector3(.03,.05,.03);
+    ps.minEmitPower=.02; ps.maxEmitPower=.05;
+    ps.gravity=new BABYLON.Vector3(0,0,0);
+    ps.start();
+  })();
+
+  const gl=new BABYLON.GlowLayer('gl',scene);
+  gl.intensity=2.6;gl.blurKernelSize=24;
+
+  // ══════════════════════════════════════════════════════════════
+  // PARÁMETROS GLOBALES AJUSTABLES EN TIEMPO REAL
+  // ══════════════════════════════════════════════════════════════
+  const P = {
+    wSep:1.6, wAli:1.0, wCoh:0.8,
+    perception:3.2, sepRadius:1.1,
+    speedMult:1.0, limitesXZ:12, limitesY:8.5, modoSalida:1
+  };
+
+  const bind=(id,key,dec,fmtId)=>{
+    const el=document.getElementById(id), out=document.getElementById(fmtId);
+    el.addEventListener('input',()=>{ P[key]=+el.value; out.textContent=(+el.value).toFixed(dec); });
+  };
+  bind('slSep','wSep',2,'vSep');
+  bind('slAli','wAli',2,'vAli');
+  bind('slCoh','wCoh',2,'vCoh');
+  bind('slPer','perception',1,'vPer');
+  bind('slSepR','sepRadius',1,'vSepR');
+  bind('slV','speedMult',1,'vval');
+  document.getElementById('slW').addEventListener('input',e=>{P.limitesXZ=+e.target.value;document.getElementById('wxval').textContent=e.target.value;});
+  document.getElementById('slY').addEventListener('input',e=>{P.limitesY=+e.target.value;document.getElementById('wyval').textContent=(+e.target.value).toFixed(1);});
+  document.getElementById('selM').addEventListener('change',e=>{P.modoSalida=+e.target.value;});
+
+  // ══════════════════════════════════════════════════════════════
+  // SHADER PROPIO: wobble por vértice + fresnel emissive + fog coherente
+  // Soporta hardware instancing (world0..world3) y atributos por instancia
+  // (phase, glowColor) para que cada agente se anime de forma independiente.
+  // ══════════════════════════════════════════════════════════════
+  BABYLON.Effect.ShadersStore["agentVertexShader"] = `
+    precision highp float;
+    attribute vec3 position;
+    attribute vec3 normal;
+    attribute vec4 color;
+    attribute float phase;
+    attribute vec3 glowColor;
+    #ifdef INSTANCES
+      attribute vec4 world0;
+      attribute vec4 world1;
+      attribute vec4 world2;
+      attribute vec4 world3;
+    #endif
+    uniform mat4 world;
+    uniform mat4 view;
+    uniform mat4 projection;
+    uniform float time;
+
+    varying vec3 vNormalW;
+    varying vec3 vPositionW;
+    varying vec3 vGlow;
+    varying float vMask;
+
+    void main(void) {
+      #ifdef INSTANCES
+        mat4 finalWorld = mat4(world0, world1, world2, world3);
+      #else
+        mat4 finalWorld = world;
+      #endif
+
+      // desplazamiento vertex "wobble" independiente por agente (phase)
+      float wob = sin(time * 5.5 + phase + position.y * 9.0) * 0.055
+                + cos(time * 3.1 + phase * 1.7) * 0.02;
+      vec3 pos = position + normal * wob;
+
+      vec4 worldPos = finalWorld * vec4(pos, 1.0);
+      vPositionW = worldPos.xyz;
+      vNormalW = normalize((finalWorld * vec4(normal, 0.0)).xyz);
+      vGlow = glowColor;
+      vMask = color.r; // r=1 en el abdomen (brilla mucho), r bajo en cuerpo/alas (apenas brilla)
+
+      gl_Position = projection * view * worldPos;
+    }
+  `;
+
+  BABYLON.Effect.ShadersStore["agentFragmentShader"] = `
+    precision highp float;
+    varying vec3 vNormalW;
+    varying vec3 vPositionW;
+    varying vec3 vGlow;
+    varying float vMask;
+
+    uniform vec3 cameraPosition;
+    uniform vec3 fogColor;
+    uniform float fogDensity;
+    uniform vec3 ambientColor;
+
+    void main(void) {
+      vec3 viewDir = normalize(cameraPosition - vPositionW);
+      float fresnel = pow(1.0 - clamp(dot(viewDir, vNormalW), 0.0, 1.0), 2.2);
+
+      // cuerpo/alas oscuros y discretos; el abdomen (vMask≈1) emite luz propia intensa
+      float glowAmount = mix(0.22, 3.2, vMask);
+      vec3 base = vGlow * 0.16 + ambientColor * 0.55;
+      vec3 emissive = vGlow * glowAmount * (0.9 + fresnel * 1.6);
+      vec3 color = base + emissive;
+
+      // niebla EXP2 igual a la de la escena base, para integrarse con el entorno
+      float dist = length(cameraPosition - vPositionW);
+      float fogFactor = exp(-(fogDensity * dist) * (fogDensity * dist));
+      fogFactor = clamp(fogFactor, 0.0, 1.0);
+      color = mix(fogColor, color, fogFactor);
+
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `;
+
+  const agentShader = new BABYLON.ShaderMaterial("agentShader", scene, {
+    vertex: "agent", fragment: "agent"
+  }, {
+    attributes: ["position","normal","color","phase","glowColor","world0","world1","world2","world3"],
+    uniforms: ["world","view","projection","time","cameraPosition","fogColor","fogDensity","ambientColor"],
+    defines: ["#define INSTANCES"]
+  });
+  agentShader.setColor3("fogColor", scene.fogColor);
+  agentShader.setFloat("fogDensity", scene.fogDensity);
+  agentShader.setColor3("ambientColor", AMBIENT_COLOR);
+  agentShader.backFaceCulling = true;
+
+  // ══════════════════════════════════════════════════════════════
+  // ESPECIES (10) — variación visual + de comportamiento
+  // ══════════════════════════════════════════════════════════════
+  const SPECIES = [
+    { glow:[.0, .9, .8],  sx:.32,sy:.10,sz:.55, spd:1.35 },
+    { glow:[.9, .7, .1],  sx:.22,sy:.18,sz:.30, spd:0.85 },
+    { glow:[.6, .3, .0],  sx:.20,sy:.14,sz:.28, spd:0.70 },
+    { glow:[.3, .9, .3],  sx:.12,sy:.09,sz:.18, spd:1.70 },
+    { glow:[.6, .2, .9],  sx:.38,sy:.08,sz:.28, spd:0.95 },
+    { glow:[.95,.80,.0],  sx:.14,sy:.10,sz:.22, spd:1.45 },
+    { glow:[.4, .9, .4],  sx:.18,sy:.12,sz:.30, spd:0.75 },
+    { glow:[.2, 1.0,.1],  sx:.15,sy:.10,sz:.20, spd:1.10 },
+    { glow:[.8, .5, .0],  sx:.16,sy:.11,sz:.24, spd:0.90 },
+    { glow:[.7, .3, .1],  sx:.28,sy:.12,sz:.34, spd:0.80 },
+  ];
+
+  // ══════════════════════════════════════════════════════════════
+  // MODELO DE LUCIÉRNAGA — cuerpo + cabeza + abdomen luminoso + alas,
+  // fusionados en UNA sola malla (para conservar el draw call único al instanciar).
+  // El abdomen se marca con vértices de color blanco (r=1) y el resto oscuro (r bajo);
+  // el shader usa ese canal como máscara de brillo (ver vMask en el fragment shader).
+  // ══════════════════════════════════════════════════════════════
+  function buildFireflyMesh(){
+    const setColor=(mesh,r,g,b,a)=>{
+      const n=mesh.getTotalVertices();
+      const c=new Array(n*4);
+      for(let i=0;i<n;i++){ c[i*4]=r;c[i*4+1]=g;c[i*4+2]=b;c[i*4+3]=a; }
+      mesh.setVerticesData(BABYLON.VertexBuffer.ColorKind,c);
+    };
+
+    // torso alargado
+    const body=BABYLON.MeshBuilder.CreateSphere('fb_body',{diameterX:.34,diameterY:.24,diameterZ:.78,segments:6},scene);
+    setColor(body,.10,.10,.10,1);
+
+    // cabeza
+    const head=BABYLON.MeshBuilder.CreateSphere('fb_head',{diameter:.22,segments:5},scene);
+    head.position.set(0,.02,.42);
+    setColor(head,.08,.08,.08,1);
+
+    // abdomen luminoso (parte trasera) — máscara r=1
+    const tip=BABYLON.MeshBuilder.CreateSphere('fb_tip',{diameterX:.26,diameterY:.20,diameterZ:.30,segments:6},scene);
+    tip.position.set(0,-.02,-.42);
+    setColor(tip,1,1,1,1);
+
+    // alas (dos láminas planas a los costados)
+    const wingL=BABYLON.MeshBuilder.CreateBox('fb_wL',{width:.02,height:.30,depth:.7},scene);
+    wingL.position.set(.20,.10,.02);wingL.rotation.z=.18;wingL.rotation.y=-.12;
+    setColor(wingL,.05,.05,.06,.6);
+    const wingR=wingL.clone('fb_wR');
+    wingR.position.x=-.20;wingR.rotation.z=-.18;wingR.rotation.y=.12;
+    setColor(wingR,.05,.05,.06,.6);
+
+    const merged=BABYLON.Mesh.MergeMeshes([body,head,tip,wingL,wingR],true,true,undefined,false,true);
+    merged.name='fireflyBase';
+    return merged;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // 200 AGENTES vía InstancedMesh (1 malla base + 199 instancias == 1 draw call)
+  // ══════════════════════════════════════════════════════════════
+  const N = 200;
+  const LIGHT_EVERY = 6; // subconjunto de agentes con PointLight real (luz propia sobre el entorno)
+
+  const baseMesh = buildFireflyMesh();
+  baseMesh.material = agentShader;
+  baseMesh.registerInstancedBuffer("phase", 1);
+  baseMesh.registerInstancedBuffer("glowColor", 3);
+  baseMesh.alwaysSelectAsActiveMesh = true;
+
+  const agents = [];
+  for (let i=0;i<N;i++){
+    const sp = SPECIES[i % SPECIES.length];
+    const mesh = (i===0) ? baseMesh : baseMesh.createInstance('ag'+i);
+    mesh.scaling.set(sp.sx, sp.sy, sp.sz);
+
+    const px=(Math.random()-.5)*18, py=1+Math.random()*7, pz=(Math.random()-.5)*18;
+    const ang=Math.random()*Math.PI*2, angY=(Math.random()-.5)*0.3;
+    const baseSpeed = 0.03 * sp.spd;
+    const vx=Math.cos(ang)*Math.cos(angY)*baseSpeed;
+    const vy=Math.sin(angY)*baseSpeed;
+    const vz=Math.sin(ang)*Math.cos(angY)*baseSpeed;
+
+    const phase = Math.random()*Math.PI*2;
+    mesh.instancedBuffers.phase = phase;
+    mesh.instancedBuffers.glowColor = new BABYLON.Color3(...sp.glow);
+
+    mesh.position.set(px,py,pz);
+    mesh.alwaysSelectAsActiveMesh = true;
+
+    // luz propia real: solo un subconjunto de agentes la lleva (por rendimiento),
+    // pero visualmente todas las 200 luciérnagas se ven luminosas gracias al shader.
+    let light=null;
+    if (i % LIGHT_EVERY === 0){
+      light = new BABYLON.PointLight('flight'+i, new BABYLON.Vector3(px,py,pz), scene);
+      light.diffuse = new BABYLON.Color3(...sp.glow);
+      light.intensity = 1.1;
+      light.range = 5.5;
+    }
+
+    agents.push({
+      mesh, px,py,pz, vx,vy,vz,
+      maxSpeed: baseSpeed*2.2,
+      cx:0,cy:0,cz:0,
+      phase, light
+    });
+  }
+  document.getElementById('nagval').textContent = N;
+  document.getElementById('nagHUD').textContent = N;
+
+  const YMN_AG = 0.4;
+  const key3 = (x,y,z)=> x+'_'+y+'_'+z;
+
+  // ══════════════════════════════════════════════════════════════
+  // FLOCKING: separación + alineación + cohesión con grid espacial (spatial hashing)
+  // ══════════════════════════════════════════════════════════════
+  function flock(){
+    const cell = Math.max(0.75, P.perception);
+    const grid = new Map();
+    for (const a of agents){
+      a.cx = Math.floor(a.px/cell); a.cy = Math.floor(a.py/cell); a.cz = Math.floor(a.pz/cell);
+      const k = key3(a.cx,a.cy,a.cz);
+      let arr = grid.get(k);
+      if (!arr){ arr=[]; grid.set(k,arr); }
+      arr.push(a);
+    }
+
+    const per2 = P.perception*P.perception;
+    const sep2 = P.sepRadius*P.sepRadius;
+
+    for (const a of agents){
+      let sepX=0,sepY=0,sepZ=0;
+      let aliX=0,aliY=0,aliZ=0,aliN=0;
+      let cohX=0,cohY=0,cohZ=0,cohN=0;
+
+      for (let dx=-1;dx<=1;dx++)
+      for (let dy=-1;dy<=1;dy++)
+      for (let dz=-1;dz<=1;dz++){
+        const nb = grid.get(key3(a.cx+dx,a.cy+dy,a.cz+dz));
+        if (!nb) continue;
+        for (const o of nb){
+          if (o===a) continue;
+          const ddx=o.px-a.px, ddy=o.py-a.py, ddz=o.pz-a.pz;
+          const d2=ddx*ddx+ddy*ddy+ddz*ddz;
+          if (d2>per2 || d2<1e-6) continue;
+
+          aliX+=o.vx; aliY+=o.vy; aliZ+=o.vz; aliN++;
+          cohX+=o.px; cohY+=o.py; cohZ+=o.pz; cohN++;
+
+          if (d2<sep2){
+            const d=Math.sqrt(d2)||0.001;
+            sepX -= ddx/d; sepY -= ddy/d; sepZ -= ddz/d;
+          }
+        }
+      }
+
+      let ax=0,ay=0,az=0;
+      if (aliN>0){
+        ax += (aliX/aliN - a.vx)*P.wAli*0.06;
+        ay += (aliY/aliN - a.vy)*P.wAli*0.06;
+        az += (aliZ/aliN - a.vz)*P.wAli*0.06;
+      }
+      if (cohN>0){
+        ax += (cohX/cohN - a.px)*P.wCoh*0.0025;
+        ay += (cohY/cohN - a.py)*P.wCoh*0.0025;
+        az += (cohZ/cohN - a.pz)*P.wCoh*0.0025;
+      }
+      ax += sepX*P.wSep*0.03; ay += sepY*P.wSep*0.03; az += sepZ*P.wSep*0.03;
+
+      a.vx += ax; a.vy += ay; a.vz += az;
+
+      const sp = Math.sqrt(a.vx*a.vx + a.vy*a.vy + a.vz*a.vz);
+      const maxSp = a.maxSpeed*P.speedMult;
+      const minSp = maxSp*0.35;
+      if (sp>maxSp){ const k=maxSp/sp; a.vx*=k; a.vy*=k; a.vz*=k; }
+      else if (sp<minSp && sp>1e-5){ const k=minSp/sp; a.vx*=k; a.vy*=k; a.vz*=k; }
+    }
+  }
+
+  function integrate(dt){
+    const XLg=P.limitesXZ, YMX=P.limitesY, modo=P.modoSalida;
+    for (const a of agents){
+      a.px += a.vx*dt*60;
+      a.py += a.vy*dt*60;
+      a.pz += a.vz*dt*60;
+
+      if (modo===0){
+        if (a.px<-XLg){a.px=-XLg;a.vx=Math.abs(a.vx);}
+        if (a.px> XLg){a.px= XLg;a.vx=-Math.abs(a.vx);}
+        if (a.pz<-XLg){a.pz=-XLg;a.vz=Math.abs(a.vz);}
+        if (a.pz> XLg){a.pz= XLg;a.vz=-Math.abs(a.vz);}
+        if (a.py<YMN_AG){a.py=YMN_AG;a.vy=Math.abs(a.vy);}
+        if (a.py>YMX){a.py=YMX;a.vy=-Math.abs(a.vy);}
+      } else {
+        if (a.px<-XLg) a.px= XLg;
+        if (a.px> XLg) a.px=-XLg;
+        if (a.pz<-XLg) a.pz= XLg;
+        if (a.pz> XLg) a.pz=-XLg;
+        if (a.py<YMN_AG) a.py=YMX;
+        if (a.py>YMX) a.py=YMN_AG;
+      }
+
+      a.mesh.position.set(a.px,a.py,a.pz);
+      a.mesh.rotation.y = -Math.atan2(a.vz,a.vx);
+      a.mesh.rotation.z = a.vy*12;
+
+      if (a.light){
+        a.light.position.set(a.px,a.py,a.pz);
+        const pulse = .5 + .5*Math.sin(elapsed*2.0 + a.phase);
+        a.light.intensity = 0.6 + pulse*1.1;
+      }
+    }
+  }
+
+  let elapsed=0, ht=0;
+  const fpsEl=document.getElementById('fps'), ffEl=document.getElementById('ff'), tEl=document.getElementById('t');
+
+  engine.runRenderLoop(()=>{
+    const dt=Math.min(engine.getDeltaTime()*.001,.05);
+    elapsed+=dt; ht+=dt;
+
+    flock();
+    integrate(dt);
+
+    agentShader.setFloat("time", elapsed);
+    agentShader.setVector3("cameraPosition", cam.position);
+
+    if (ht>=.2){
+      ht=0;
+      const fps=engine.getFps();
+      fpsEl.textContent=fps.toFixed(0);
+      tEl.textContent=elapsed.toFixed(1);
+      ffEl.style.width=Math.min(100,(fps/60)*100)+'%';
+    }
+
+    scene.render();
+  });
+  window.addEventListener('resize',()=>engine.resize());
+})();
+</script>
+</body>
+</html>
